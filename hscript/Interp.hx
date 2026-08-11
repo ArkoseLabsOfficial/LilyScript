@@ -20,7 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-/*
+ /*
  * YoshiCrafter Engine fixes:
  * - Added Error handler
  * - Added Imports
@@ -88,6 +88,8 @@ class RedeclaredVar {
 @:access(hscript.SScript)
 @:analyzer(optimize, local_dce, fusion, user_var_fusion)
 class Interp {
+	public static var globalCustomClasses:Map<String, CustomClassHandler> = new Map();
+
 	private var hasScriptObject(default, null):Bool = false;
 	private var _scriptObjectType(default, null):ScriptObjectType = SNull;
 
@@ -127,6 +129,10 @@ class Interp {
 				_scriptObjectType = SNull;
 		}
 		hasScriptObject = v != null;
+		if (v != null)
+			variables.set("scriptObject", v);
+		else
+			variables.remove("scriptObject");
 		return scriptObject = v;
 	}
 
@@ -175,7 +181,7 @@ class Interp {
 	];
 
 	var usingHandler:UsingHandler;
-	
+
 	var script:SScript;
 	public var specialObject:{obj:Dynamic, ?includeFunctions:Bool, ?exclusions:Array<String>} = {obj: null, includeFunctions: null, exclusions: null};
 
@@ -205,7 +211,7 @@ class Interp {
 		staticVariables = new Map<String, Dynamic>();
 
 		usingHandler = new UsingHandler();
-		
+
 		variables.set("null", null);
 		variables.set("true", true);
 		variables.set("false", false);
@@ -243,10 +249,10 @@ class Interp {
 						var clsName = cast(expr2, CustomClassHandler).name;
 						objName == clsName;
 					}
-					else 
+					else
 						Std.isOfType(expr1, expr2);
 				}
-				else 
+				else
 					false;
 		}
 	}
@@ -256,17 +262,22 @@ class Interp {
 	}
 
 	public function setVar(name:String, v:Dynamic):Void {
-		if (allowStaticVariables && staticVariables.exists(name))
+		if (allowStaticVariables && staticVariables.exists(name)) {
 			staticVariables.set(name, v);
-		else if (allowPublicVariables && publicVariables.exists(name))
+			if (variables.exists(name))
+				variables.set(name, v);
+		} else if (allowPublicVariables && publicVariables.exists(name)) {
 			publicVariables.set(name, v);
-		else if (variables.exists(name))
+			if (variables.exists(name))
+				variables.set(name, v);
+		} else if (variables.exists(name))
 			variables.set(name, v);
-		else if (allowPublicVariables)
+		else if (allowPublicVariables) {
 			// Truly new name in a pack that shares public vars: publish it so
 			// sibling scripts declaring/reading it later resolve the same value
 			// (fixes cross-script assignment made before the `public var` declaration runs).
 			publicVariables.set(name, v);
+		}
 		else
 			variables.set(name, v);
 	}
@@ -274,13 +285,13 @@ class Interp {
 	function assign(e1:Expr, e2:Expr):Dynamic {
 		var v = expr(e2);
 		switch (Tools.expr(e1)) {
-		case EIdent(id):
-			var l = locals.get(id);
-			if (l != null && l.isFinal)
-				return error(ECustom('Cannot reassign final variable $id'));
-			if (l == null) {
-				if (hasScriptObject && !varExists(id)) {
-						var instanceHasField = __instanceFields.contains(id);
+			case EIdent(id):
+				var l = locals.get(id);
+				if (l != null && l.isFinal)
+					return error(ECustom('Cannot reassign final variable $id'));
+				if (l == null) {
+					if (hasScriptObject && (!varExists(id) || (_scriptObjectType == SCustomClass && (cast(scriptObject, CustomClass).hasField(id) || cast(scriptObject, CustomClass).hasStaticField(id))))) {
+						var instanceHasField = __instanceFields.contains(id) || (_scriptObjectType == SCustomClass && (cast(scriptObject, CustomClass).hasField(id) || cast(scriptObject, CustomClass).hasStaticField(id)));
 
 						if (_scriptObjectType == SObject && instanceHasField) {
 							UnsafeReflect.setField(scriptObject, id, v);
@@ -364,8 +375,8 @@ class Interp {
 					return error(ECustom('Cannot reassign final variable $id'));
 				v = fop(expr(e1), expr(e2));
 				if (l == null) {
-					if(hasScriptObject && !varExists(id)) {
-						var instanceHasField = __instanceFields.contains(id);
+					if (hasScriptObject && (!varExists(id) || (_scriptObjectType == SCustomClass && (cast(scriptObject, CustomClass).hasField(id) || cast(scriptObject, CustomClass).hasStaticField(id))))) {
+						var instanceHasField = __instanceFields.contains(id) || (_scriptObjectType == SCustomClass && (cast(scriptObject, CustomClass).hasField(id) || cast(scriptObject, CustomClass).hasStaticField(id)));
 
 						if (_scriptObjectType == SObject && instanceHasField) {
 							UnsafeReflect.setField(scriptObject, id, v);
@@ -480,6 +491,19 @@ class Interp {
 					if (l.depth == 0) varLocationCache.remove(id);
 					return v;
 				} else {
+					if (hasScriptObject && _scriptObjectType == SCustomClass) {
+						var cc:CustomClass = cast scriptObject;
+						if (cc.hasField(id) || cc.hasStaticField(id)) {
+							var v:Dynamic = cc.hget(id);
+							if (prefix) {
+								v += delta;
+								cc.hset(id, v);
+							} else {
+								cc.hset(id, v + delta);
+							}
+							return v;
+						}
+					}
 					var v:Dynamic = resolve(id, true, false);
 					var prop:Property = null;
 					if (v is Property) {
@@ -786,17 +810,17 @@ class Interp {
 	public inline function error(e:#if hscriptPos ErrorDef #else Error #end, rethrow = false):Dynamic {
 		#if hscriptPos var e = new Error(e, curExpr.pmin, curExpr.pmax, curExpr.origin, curExpr.line); #end
 
-		if(!rethrow) 
+		if(!rethrow)
 			throw e;
 		else
 			this.rethrow(e);
-		
+
 		return null;
 	}
 
 	public inline function warn(e:#if hscriptPos ErrorDef #else Error #end) {
 		#if hscriptPos var e = new Error(e, curExpr.pmin, curExpr.pmax, curExpr.origin, curExpr.line); #end
-		
+
 		if(warnHandler != null)
 			warnHandler(e);
 		else
@@ -861,6 +885,8 @@ class Interp {
 						obj.__allowSetGet = true;
 						res;
 					case VNotFound:
+						if (globalCustomClasses.exists(id))
+							return globalCustomClasses.get(id);
 						var cl = Type.resolveClass(id);
 						if(cl != null) return cl;
 						var en = Type.resolveEnum(id);
@@ -887,17 +913,25 @@ class Interp {
 		if(customClasses.exists(id))
 			return customClasses.get(id);
 
+		if (globalCustomClasses.exists(id))
+			return globalCustomClasses.get(id);
+
 		if (specialObject != null && specialObject.obj != null) {
 			var specialObj = specialObject.obj;
 			var exclusions = specialObject.exclusions;
-			
+
 			if (exclusions == null || !exclusions.contains(id)) {
 				try {
 					var val = UnsafeReflect.getProperty(specialObj, id);
-					if (specialObject.includeFunctions == false && Reflect.isFunction(val)) {
-						// Skip functions if includeFunctions is false
-					} else {
-						return val;
+					if (val == null) {
+						val = UnsafeReflect.field(specialObj, id);
+					}
+					if (val != null) {
+						if (specialObject.includeFunctions == false && Reflect.isFunction(val)) {
+							// Skip functions if includeFunctions is false
+						} else {
+							return val;
+						}
 					}
 				} catch (e:Dynamic) {
 					// Property not accessible, continue to next check
@@ -907,7 +941,7 @@ class Interp {
 
 		if (hasScriptObject) {
 			// search in object
-			if (id == "this") {
+			if (id == "this" || id == "scriptObject" || id == "__script__") {
 				return scriptObject;
 			}
 			var instanceHasField = __instanceFields.contains(id);
@@ -938,13 +972,16 @@ class Interp {
 					return UnsafeReflect.field(scriptObject, id);
 				} else {
 					varLocationCache.set(id, VScriptObject);
-					return UnsafeReflect.getProperty(scriptObject, id);
+					var res = UnsafeReflect.getProperty(scriptObject, id);
+					if (res == null)
+						res = UnsafeReflect.field(scriptObject, id);
+					return res;
 				}
 			} else if (__instanceFields.contains('get_$id')) { // getter
 				return UnsafeReflect.getProperty(scriptObject, 'get_$id')();
 			}
 		}
-		
+
 		// @:resolve fallback
 		if (hasScriptObject) {
 			var r = tryResolve(scriptObject, id);
@@ -1008,8 +1045,12 @@ class Interp {
 				}
 				var cls:CustomClassHandler = new CustomClassHandler(this, oldName, fields, importVar(extend), [for (i in interfaces) importVar(i)], isFinal);
 				customClasses.set(toSetName, cls);
+				variables.set(toSetName, cls);
+				globalCustomClasses.set(toSetName, cls);
 				if(hasAlias) {
 					customClasses.set(oldName, cls); // Allow usage in the same module
+					variables.set(oldName, cls);
+					globalCustomClasses.set(oldName, cls);
 					beforeAlias = null;
 					setAlias = null;
 				}
@@ -1019,7 +1060,7 @@ class Interp {
 				if(isStar) {
 					var realClassName = clsName;
 					if(importBlocklist.contains(realClassName)) return null;
-					
+
 					var cls = Type.resolveClass(realClassName);
 					if(cls != null) {
 						for(field in Reflect.fields(cls)) {
@@ -1052,7 +1093,7 @@ class Interp {
 
 				if(variables.exists(toSetName)) { // class is already imported 
 					if(isUsing && !usingHandler.entryExists(toSetName))
-						setUsing(toSetName, variables.get(toSetName)); 
+						setUsing(toSetName, variables.get(toSetName));
 
 					return null;
 				}
@@ -1066,7 +1107,16 @@ class Interp {
 
 					return null;
 				}
-				
+
+				if (globalCustomClasses.exists(toSetName)) {
+					var cls = globalCustomClasses.get(toSetName);
+					customClasses.set(toSetName, cls);
+					variables.set(toSetName, cls);
+					if (isUsing && !usingHandler.entryExists(toSetName))
+						setCustomClassUsing(toSetName, cls);
+					return null;
+				}
+
 				function importResolve(__clsName:String):Null<Dynamic> {
 					var _realClassName = getLocalImportRedirect(__clsName);
 					if(importBlocklist.contains(_realClassName)) return null;
@@ -1190,7 +1240,7 @@ class Interp {
 					var enumFields = en.fields;
 					for (i => ef in enumFields) {
 						var fieldName = ef.name;
-						
+
 						if(ef.args.length < 1) {
 							var enumValue:HEnumValue = {
 								enumName: enumName,
@@ -1210,7 +1260,7 @@ class Interp {
 								else
 									minParams++;
 							}
-								
+
 							var f = function(args:Array<Dynamic>):HEnumValue {
 								if (((args == null) ? 0 : args.length) != params.length) {
 									if (args.length < minParams) {
@@ -1248,7 +1298,7 @@ class Interp {
 
 					variables.set(en.name, enumThingy);
 				}
-		case EInterface(name, fields, extend):
+			case EInterface(name, fields, extend):
 				var iface:Dynamic = {};
 				for(f in fields) {
 					var fe = Tools.expr(f);
@@ -1266,7 +1316,7 @@ class Interp {
 				variables.set(name, iface);
 				return null;
 
-		case ETypedef(name, t):
+			case ETypedef(name, t):
 				switch(t) {
 					case CTPath(path, _):
 						var fullPath = path.join(".");
@@ -1340,7 +1390,7 @@ class Interp {
 				declared.push({n: n, old: locals.get(n), depth: depth});
 				var v:Dynamic = (e == null) ? null : expr(e);
 				var r:Dynamic = null;
-				if (hasGetSet) 
+				if (hasGetSet)
 					r = new Property(n, v, getter, setter, isVar, isStatic, this);
 				else
 					r = v;
@@ -1363,7 +1413,8 @@ class Interp {
 							publicVariables.set(n, locals[n].r);
 						locals.remove(n);
 					} else {
-						variables.set(n, locals[n].r);
+						if (!variables.exists(n))
+							variables.set(n, locals[n].r);
 					}
 				}
 				return null;
@@ -1411,12 +1462,12 @@ class Interp {
 				var opStr = op.toString();
 				return switch(op) {
 					case OpAdd, OpSub, OpMult, OpDiv, OpMod, OpAnd, OpOr, OpXor, OpShl, OpShr, OpUshr,
-						 OpEq, OpNeq, OpGte, OpLte, OpGt, OpLt, OpInterval:
+						OpEq, OpNeq, OpGte, OpLte, OpGt, OpLt, OpInterval:
 						var a:Dynamic = expr(e1);
 						var b:Dynamic = expr(e2);
 						var r = tryOpOverload(opStr, a, b);
 						if (r != null) r
-						else switch(op) {
+							else switch(op) {
 							case OpAdd: (a is String || b is String) ? (Std.string(a) + Std.string(b)) : a + b;
 							case OpSub: a - b;
 							case OpMult: a * b;
@@ -1483,6 +1534,38 @@ class Interp {
 							error(EInvalidAccess(f));
 						}
 						return fcall(obj, f, args);
+					case EIdent(id):
+						var l = locals.get(id);
+						if (l == null) {
+							if (hasScriptObject && _scriptObjectType == SCustomClass) {
+								var cc:CustomClass = cast scriptObject;
+								if (cc.hasField(id) || cc.hasStaticField(id)) {
+									return fcall(scriptObject, id, args);
+								}
+							}
+							if (specialObject != null && specialObject.obj != null) {
+								var specialObj = specialObject.obj;
+								var exclusions = specialObject.exclusions;
+								if (exclusions == null || !exclusions.contains(id)) {
+									var fn:Dynamic = UnsafeReflect.field(specialObj, id);
+									if (fn == null)
+										fn = UnsafeReflect.getProperty(specialObj, id);
+									if (fn != null && Reflect.isFunction(fn)) {
+										return fcall(specialObj, id, args);
+									}
+								}
+							}
+							if (hasScriptObject && __instanceFields.contains(id)) {
+								return fcall(scriptObject, id, args);
+							}
+						}
+						var fn:Dynamic = expr(e);
+						if (fn != null) {
+							var r = tryCallable(fn, args);
+							if (r != null)
+								return r;
+						}
+						return call(null, fn, args);
 					default:
 						var fn:Dynamic = expr(e);
 						// @:callable support
@@ -1814,7 +1897,7 @@ class Interp {
 								}
 						}
 					}
-					
+
 					if (match) {
 						if(c.guard != null) {
 							if(!expr(c.guard)) {
@@ -1868,6 +1951,11 @@ class Interp {
 						var converted2 = tryConvertFrom(customClasses.get(targetType), val);
 						if (converted2 != null) return converted2;
 					}
+					if (globalCustomClasses.exists(targetType)) {
+						var converted2 = tryConvertFrom(globalCustomClasses.get(targetType), val);
+						if (converted2 != null)
+							return converted2;
+					}
 				}
 				return val;
 		}
@@ -1913,12 +2001,12 @@ class Interp {
 			try v = v.iterator() catch (e:Dynamic) {};
 		}
 		#else
-		if(allowKeyValue) 
+		if(allowKeyValue)
 			try v = v.keyValueIterator() catch (e:Dynamic) {};
 
-		if(v.hasNext == null || v.next == null) 
+		if(v.hasNext == null || v.next == null)
 			try v = v.iterator() catch (e:Dynamic) {};
-		
+
 		#end
 		if (v.hasNext == null || v.next == null) error(EInvalidIterator(v));
 		return v;
@@ -1930,17 +2018,13 @@ class Interp {
 		untyped __cpp__('{0}->reserve({1}->length)', args, params);
 		#end
 		for (p in params) {
-			switch (Tools.expr(p)) {
-				case EIdent(id):
-					var ident:Dynamic = resolve(id);
-					if (ident is CustomClass) {
-						var customClass:CustomClass = cast ident; // Pass the underlying superclass if exist
-						args.push(customClass.__superClass != null ? customClass.getSuperclass() : customClass);
-					} else {
-						args.push(ident);
-					}
-				default:
-					args.push(expr(p));
+			var val:Dynamic = expr(p);
+			if (val is CustomClass) {
+				var customClass:CustomClass = cast val;
+				var nativeObj = customClass.getSuperclass();
+				args.push(nativeObj != null && !(nativeObj is CustomClass) ? nativeObj : customClass);
+			} else {
+				args.push(val);
 			}
 		}
 
@@ -1958,7 +2042,7 @@ class Interp {
 		var _next = it.next;
 		while (_hasNext()) {
 			var next = _next();
-			if(isKeyValue)
+			if (isKeyValue)
 				locals.set(ithv, {r: next.key, depth: depth, isFinal: false});
 			locals.set(n, {r: isKeyValue ? next.value : next, depth: depth, isFinal: false});
 			if (!loopRun(() -> expr(e)))
@@ -2058,7 +2142,7 @@ class Interp {
 		}) {
 			return _getRedirect(o, f);
 		}
-		
+
 		if (o is IHScriptCustomAccessBehaviour) {
 			var obj:IHScriptCustomAccessBehaviour = cast o;
 			if(isBypassAccessor) {
@@ -2100,6 +2184,8 @@ class Interp {
 			#else
 			if ((v = UnsafeReflect.getProperty(o, f)) == null && useRedirects)
 				v = Reflect.getProperty(cls, f);
+			if (v == null)
+				v = UnsafeReflect.field(o, f);
 			#end
 		}
 
@@ -2138,7 +2224,7 @@ class Interp {
 			cl != null && setRedirects.exists(cl) && (_setRedirect = setRedirects[cl]) != null;
 		})
 			return _setRedirect(o, f, v);
-		
+
 		if (o is IHScriptCustomAccessBehaviour) {
 			var obj:IHScriptCustomAccessBehaviour = cast o;
 			if(isBypassAccessor) {
@@ -2163,10 +2249,15 @@ class Interp {
 			untyped __cpp__('{0}->__SetField({1}, {2}, ::hx::paccAlways)', o, f, v);
 		}
 		#else
-		if(isBypassAccessor) {
+		var setDone:Bool = false;
+		if(!isBypassAccessor) {
+			try {
+				UnsafeReflect.setProperty(o, f, v);
+				setDone = true;
+			} catch (e:Dynamic) {}
+		}
+		if (!setDone) {
 			UnsafeReflect.setField(o, f, v);
-		} else {
-			UnsafeReflect.setProperty(o, f, v);
 		}
 		#end
 		return v;
@@ -2276,22 +2367,50 @@ class Interp {
 					}
 				}
 			}
-			
 		}
 
+		var callTarget:Dynamic = o;
 		var func = get(o, f);
 		// Workaround for an HTML5-specific issue.
 		// https://github.com/HaxeFoundation/haxe/issues/11298
+
+		if (func == null) {
+			func = UnsafeReflect.field(o, f);
+		}
+		if (func == null) {
+			func = UnsafeReflect.getProperty(o, f);
+		}
+
+		if (o is CustomClass) {
+			var cc:CustomClass = cast o;
+			var nativeObj = cc.getSuperclass();
+			if (nativeObj != null && !(nativeObj is CustomClass)) {
+				callTarget = nativeObj;
+				if (func == null) {
+					func = UnsafeReflect.field(nativeObj, f);
+					if (func == null)
+						func = UnsafeReflect.getProperty(nativeObj, f);
+				}
+			}
+		}
+
 		#if js
 		if (func == null && f == "contains") {
 			func = get(o, "includes");
 		}
 		#end
 
-		return call(o, func, args);
+		return call(callTarget, func, args);
 	}
 
-	inline function call(o:Dynamic, f:Dynamic, args:Array<Dynamic>):Dynamic {
+	function call(o:Dynamic, f:Dynamic, args:Array<Dynamic>):Dynamic {
+		if (o != null && o is CustomClass) {
+			var cc:CustomClass = cast o;
+			var nativeObj = cc.getSuperclass();
+			if (nativeObj != null && !(nativeObj is CustomClass)) {
+				return UnsafeReflect.callMethodSafe(nativeObj, f, args);
+			}
+		}
 		return UnsafeReflect.callMethodSafe(o, f, args);
 	}
 

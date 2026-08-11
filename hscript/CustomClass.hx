@@ -47,6 +47,17 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 		__interp.staticVariables = __class.ogInterp.staticVariables;
 		__interp.customClasses = __class.ogInterp.customClasses;
 
+		// Allow Parent Access on Classes
+		if (__class.ogInterp.specialObject != null && __class.ogInterp.specialObject.obj != null) {
+			__interp.specialObject = __class.ogInterp.specialObject;
+		} else if (__class.ogInterp.scriptObject != null && !(__class.ogInterp.scriptObject is CustomClass)) {
+			__interp.specialObject = {obj: __class.ogInterp.scriptObject, includeFunctions: true, exclusions: []};
+		}
+
+		// Allow Public and Static Variables
+		__interp.allowStaticVariables = true;
+		__interp.allowPublicVariables = true;
+
 		for(f => v in __class.__interp.variables) {
 			if(f == 'new') continue;
 			if (!__interp.variables.exists(f))
@@ -183,31 +194,60 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 			if(toSuper && __interp.variables.exists(superFnName)) {
 				__interp.variables.get(superFnName);
 			}
-			else 
+			else
 				__interp.variables.get(name);
 		};
 
 		if (fn != null && Reflect.isFunction(fn))
 			return UnsafeReflect.callMethodUnsafe(null, fn, (args == null) ? [] : args);
-		
+
 		// If not found in current class, try parent class recursively
 		if (__superClass != null && __superClass is CustomClass)
 			return cast(__superClass, CustomClass).call(name, args, toSuper);
-		
-		__interp.error(ECustom('$name doesn\'t exists or is not a function'));
+
+		if (hasStaticField(name)) {
+			var sfn = __class.getField(name);
+			if (sfn != null && Reflect.isFunction(sfn))
+				return UnsafeReflect.callMethodUnsafe(null, sfn, (args == null) ? [] : args);
+		}
+
+		if (__interp.specialObject != null && __interp.specialObject.obj != null) {
+			var parentObj = __interp.specialObject.obj;
+			var pfn:Dynamic = UnsafeReflect.field(parentObj, name);
+			if (pfn == null)
+				pfn = UnsafeReflect.getProperty(parentObj, name);
+			if (pfn != null && Reflect.isFunction(pfn))
+				return UnsafeReflect.callMethodUnsafe(parentObj, pfn, (args == null) ? [] : args);
+		}
+
+		__interp.error(ECustom('$name doesn\'t exist or is not a function'));
 		return null;
 	}
 
-	function hasField(name:String) {
-		return __class__fields.contains(name);
+	public function hasField(name:String):Bool {
+		if (__class__fields.contains(name))
+			return true;
+		if (__superClass != null)
+			return superHasField(name);
+		return false;
 	}
 
-	function hasStaticField(name:String):Bool {
+	public function hasStaticField(name:String):Bool {
 		return __class.hasField(name);
 	}
 
 	function getField(name:String, allowProperty:Bool = true):Dynamic {
-		var f = __interp.variables.get(name);
+		// Allowing to Access Haxe Classes ??????
+		var f = __interp.variables.exists(name) ? __interp.variables.get(name) : (__interp.publicVariables != null && __interp.publicVariables.exists(name) ? __interp.publicVariables.get(name) : null);
+		if (f == null && __superClass != null && superHasField(name)) {
+			if (__superClass is IHScriptCustomAccessBehaviour) {
+				f = cast(__superClass, IHScriptCustomAccessBehaviour).hget(name);
+			} else {
+				f = UnsafeReflect.getProperty(__superClass, name);
+				if (f == null)
+					f = UnsafeReflect.field(__superClass, name);
+			}
+		}
 		if (f != null && allowProperty && f is Property) {
 			var prop:Property = cast f;
 			//prop.__allowSetGet = this.__allowSetGet;
@@ -226,6 +266,9 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 			var r = prop.set(val, !__allowSetGet);
 			//prop.__allowSetGet = true;
 			return r;
+		}
+		if (__interp.publicVariables != null && __interp.publicVariables.exists(name)) {
+			__interp.publicVariables.set(name, val);
 		}
 		__interp.variables.set(name, val);
 		return val;
@@ -290,15 +333,32 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 					return getField(name);
 
 				if (hasStaticField(name)) {
-					__interp.error(ECustom('The field ${name} should be accessed in a static way.'));
-					return null;
+					// Allow static variable access.
+					return __class.getField(name);
 				}
 
 				if (__superClass != null) {
 					if (superHasField(name)) {
-						__superClass.__allowSetGet = this.__allowSetGet;
-						return __superClass.hget(name);
+						if (__superClass is IHScriptCustomAccessBehaviour) {
+							cast(__superClass, IHScriptCustomAccessBehaviour).__allowSetGet = this.__allowSetGet;
+							return cast(__superClass, IHScriptCustomAccessBehaviour).hget(name);
+						} else {
+							var v = UnsafeReflect.getProperty(__superClass, name);
+							if (v == null)
+								v = UnsafeReflect.field(__superClass, name);
+							return v;
+						}
 					}
+				}
+
+				// Allow getting parent object variable
+				if (__interp.specialObject != null && __interp.specialObject.obj != null) {
+					var parentObj = __interp.specialObject.obj;
+					var v = UnsafeReflect.getProperty(parentObj, name);
+					if (v == null)
+						v = UnsafeReflect.field(parentObj, name);
+					if (v != null)
+						return v;
 				}
 
 				throw "field '"
@@ -312,22 +372,43 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 	}
 
 	public function hset(name:String, val:Dynamic):Dynamic {
-		if (hasField(name)) 
+		if (hasField(name))
 			return setField(name, val);
 
 		if (hasStaticField(name)) {
-			__interp.error(ECustom('The field ${name} should be accessed in a static way.'));
-			return null;
+			// Allow static variable access.
+			return __class.setField(name, val);
 		}
 
 		if (__superClass != null) {
 			if (superHasField(name)) {
-				__superClass.__allowSetGet = this.__allowSetGet;
-				return __superClass.hset(name, val);
+				if (__superClass is IHScriptCustomAccessBehaviour) {
+					cast(__superClass, IHScriptCustomAccessBehaviour).__allowSetGet = this.__allowSetGet;
+					return cast(__superClass, IHScriptCustomAccessBehaviour).hset(name, val);
+				} else {
+					var v = UnsafeReflect.getProperty(__superClass, name);
+					if (v == null)
+						UnsafeReflect.setField(__superClass, name, val);
+						
+					if (v != null)
+						UnsafeReflect.setProperty(__superClass, name, val);
+					return val;
+				}
 			}
-		}
-		else if(__class.extend != null && initializing) {
+		} else if(__class.extend != null && initializing) {
 			cacheFieldSet(name, val);
+			return val;
+		}
+
+		// Allow changing parent object variable (Property and Field Check lol)
+		if (__interp.specialObject != null && __interp.specialObject.obj != null) {
+			var parentObj = __interp.specialObject.obj;
+			var v = UnsafeReflect.getProperty(parentObj, name);
+			if (v == null)
+				UnsafeReflect.setField(parentObj, name, val);
+				
+			if (v != null)
+				UnsafeReflect.setProperty(parentObj, name, val);
 			return val;
 		}
 
@@ -359,7 +440,7 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 	 */
 	public function getSuperclass():IHScriptCustomClassBehaviour {
 		if(__superClass == null) return null;
-		
+
 		var cls:Null<IHScriptCustomClassBehaviour> = __superClass;
 
 		// Check if the superClass is another custom class,

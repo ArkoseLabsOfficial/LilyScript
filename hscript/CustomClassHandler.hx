@@ -37,7 +37,7 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 					ogInterp.error(ECustom('Cannot extend a final class'));
 				this.cl = customCls;
 			}
-			else 
+			else
 				this.cl = Type.resolveClass('${extend}_HSX');
 
 			if(cl == null)
@@ -58,10 +58,13 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 		__interp.publicVariables = ogInterp.publicVariables;
 		__interp.staticVariables = ogInterp.staticVariables;
 		__interp.customClasses = ogInterp.customClasses;
+		__interp.allowStaticVariables = true;
+		__interp.allowPublicVariables = true;
 
-		for(f => v in ogInterp.variables) 
+		for(f => v in ogInterp.variables) {
 			if(!__interp.variables.exists(f))
 				__interp.variables.set(f, v);
+		}
 
 		for(i => e in fields.copy()) {
 			var isValid:Bool = false;
@@ -108,7 +111,7 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 					for (m in fieldMetas) {
 						if ((m.name == "to" || m.name == ":to") && fieldRet != null) {
 							var targetType = new Printer().typeToString(fieldRet);
-							var fn:Dynamic = __interp.variables.get(fieldName);
+							var fn:Dynamic = __interp.staticVariables.exists(fieldName) ? __interp.staticVariables.get(fieldName) : __interp.variables.get(fieldName);
 							if (fn != null) {
 								var list:Array<Dynamic> = UnsafeReflect.field(this, "__conversions_to");
 								if (list == null) {
@@ -119,7 +122,7 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 							}
 						}
 						if (m.name == "from" || m.name == ":from") {
-							var fn:Dynamic = __interp.variables.get(fieldName);
+							var fn:Dynamic = __interp.staticVariables.exists(fieldName) ? __interp.staticVariables.get(fieldName) : __interp.variables.get(fieldName);
 							if (fn != null) {
 								var listFrom:Array<Dynamic> = UnsafeReflect.field(this, "__conversions_from");
 								if (listFrom == null) {
@@ -135,13 +138,12 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 		}
 	}
 
-	public function hnew(args:Array<Dynamic>):Dynamic 
+	public function hnew(args:Array<Dynamic>):Dynamic
 		return new CustomClass(this, args);
 
-	@:allow(hscript.Interp)
-	inline function hasField(name:String) {
-        return __staticFields.contains(name);
-    }
+	public inline function hasField(name:String):Bool {
+		return __staticFields.contains(name) || __interp.staticVariables.exists(name) || __interp.variables.exists(name);
+	}
 
 	@:allow(hscript.Interp)
 	function isNoUsing(name:String):Bool {
@@ -152,30 +154,36 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 		return false;
 	}
 
-    function getField(name:String, allowProperty:Bool = true):Dynamic {
-        var f = __interp.variables.get(name);
-        if(f is Property && allowProperty) {
-            var prop:Property = cast f;
-            //prop.__allowSetGet = this.__allowSetGet;
-            var r = prop.get(!__allowSetGet);
-            //prop.__allowSetGet = true;
-            return r;
-        }
-        return f;
-    }
+	function getField(name:String, allowProperty:Bool = true):Dynamic {
+		var f = __interp.staticVariables.exists(name) ? __interp.staticVariables.get(name) : __interp.variables.get(name);
+		if (f != null && f is Property && allowProperty) {
+			var prop:Property = cast f;
+			//prop.__allowSetGet = this.__allowSetGet;
+			var r = prop.get(!__allowSetGet);
+			trace('$name - $r');
+			//prop.__allowSetGet = true;
+			return r;
+		}
+		return f;
+	}
 
-    function setField(name:String, val:Dynamic):Dynamic {
-        var f = getField(name, false);
-        if(f is Property) {
-            var prop:Property = cast f;
-            //prop.__allowSetGet = this.__allowSetGet;
-            var r = prop.set(val, !__allowSetGet);
-            //prop.__allowSetGet = true;
-            return r;
-        }
-        __interp.variables.set(name, val);
-        return val;
-    }
+	function setField(name:String, val:Dynamic):Dynamic {
+		var f = getField(name, false);
+		if (f != null && f is Property) {
+			var prop:Property = cast f;
+			//prop.__allowSetGet = this.__allowSetGet;
+			var r = prop.set(val, !__allowSetGet);
+			//prop.__allowSetGet = true;
+			return r;
+		}
+		if (__interp.staticVariables.exists(name) || __interp.allowStaticVariables) {
+			__interp.staticVariables.set(name, val);
+		}
+		if (__interp.variables.exists(name)) {
+			__interp.variables.set(name, val);
+		}
+		return val;
+	}
 
 	public function hget(name:String):Dynamic {
 		if(name == 'new') {
@@ -183,10 +191,10 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 				return inline this.hnew(args);
 			});
 		}
-		
+
 		if(hasField(name)) {
-            return getField(name);
-        }
+			return getField(name);
+		}
 		throw "field '"+ name+ "' does not exist in class '"+ this.name+ "'";
 		return null;
 	}
