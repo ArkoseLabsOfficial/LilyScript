@@ -7,7 +7,7 @@ import hscript.Expr.FieldPropertyAccess;
 /**
  * Special variable that handles 'getter/setter' function calls
  * depending of the read/write access combination.
-  * 
+ * 
  * Example:
  * ```haxe
  * public var myvar(get, set):Int;
@@ -172,16 +172,7 @@ class Property {
 		return rt;
 	}
 
-	private function varExists(n:String):Bool {
-		if (isStatic)
-			return interp.staticVariables.exists(n);
-		if (interp.variables.exists(n))
-			return true;
-        @:privateAccess
-		if (interp.scriptObject != null && interp.scriptObject is CustomClass) {
-			var cc:CustomClass = cast interp.scriptObject;
-			return cc.hasField(n);
-		}
-		return false;
+	private inline function varExists(n:String) {
+		return isStatic ? interp.staticVariables.exists(n) : interp.variables.exists(n);
 	}
 }
