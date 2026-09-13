@@ -43,6 +43,7 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 
 		// __interp.variables = __class.staticInterp.variables;
 		@:privateAccess __interp.usingHandler.usingEntries = __class.ogInterp.usingHandler.usingEntries;
+		@:privateAccess __interp.usingHandler.hasUsingEntries = __class.ogInterp.usingHandler.hasUsingEntries;
 		__interp.publicVariables = __class.ogInterp.publicVariables;
 		__interp.staticVariables = __class.ogInterp.staticVariables;
 		__interp.customClasses = __class.ogInterp.customClasses;
@@ -167,7 +168,7 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 			}
 			customClass.__upperClass = this;
 			__superClass = customClass;
-			@:privateAccess __interp.__instanceFields = __interp.__instanceFields.concat(getSuperFields());
+			@:privateAccess for (f in getSuperFields()) __interp.__instanceFields.set(f, true);
 		} else {
 			if(__cachedFieldSet != null)
 				UnsafeReflect.setField(__class.cl, "__cachedFieldSet", __cachedFieldSet);
@@ -181,7 +182,7 @@ class CustomClass implements IHScriptCustomClassBehaviour {
 				fieldMap.array();
 			}
 			this.__real_fields = disallowCopy;
-			@:privateAccess __interp.__instanceFields = __interp.__instanceFields.concat(disallowCopy);
+			@:privateAccess for (f in disallowCopy) __interp.__instanceFields.set(f, true);
 			__superClass.__real_fields = this.__real_fields;
 			__superClass.__class__fields = this.__class__fields;
 			__superClass.__interp = this.__interp;

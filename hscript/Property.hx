@@ -135,7 +135,7 @@ class Property {
 				var fName:String = setterFunc;
 				if (!__allowWriteAccess && __allowSetGet) {
 					if (varExists(fName))
-						return callAccessor(fName, val);
+						return callAccessor(fName, true, val);
 					else
 						interp.error(ECustom('Method $fName required by property $name is missing'));
 				} else {
@@ -153,10 +153,9 @@ class Property {
 		return r = val;
 	}
 
-	private function callAccessor(f:String, ?value:Dynamic):Dynamic {
+	private function callAccessor(f:String, isWrite:Bool = false, ?value:Dynamic):Dynamic {
 		var fn = isStatic ? interp.staticVariables.get(f) : interp.variables.get(f);
 		var rt:Dynamic = null;
-		var isWrite:Bool = value != null;
 		if (fn != null && Reflect.isFunction(fn)) {
 			if (isWrite) __allowWriteAccess = true;
 			else __allowReadAccess = true;

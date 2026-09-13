@@ -179,6 +179,8 @@ class Parser {
 	function initParser( origin:String ) {
 		// line=1 - don't reset line : it might be set manualy
 		preprocStack = [];
+		disableOrOp = false;
+		isVar = false;
 		#if hscriptPos
 		this.origin = origin;
 		readPos = 0;

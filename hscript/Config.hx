@@ -30,4 +30,9 @@ class Config {
 	public static final DISALLOW_TYPEDEFS = [
 
 	];
+
+	@:unreflective
+	public static final IMPORT_BLACKLIST:Array<String> = [
+		// "flixel.FlxG"
+	];
 }

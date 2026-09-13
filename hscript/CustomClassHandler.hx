@@ -55,6 +55,7 @@ class CustomClassHandler implements IHScriptCustomConstructor implements IHScrip
 
 		//__interp.variables = ogInterp.variables;
 		__interp.usingHandler.usingEntries = ogInterp.usingHandler.usingEntries;
+		__interp.usingHandler.hasUsingEntries = ogInterp.usingHandler.hasUsingEntries;
 		__interp.publicVariables = ogInterp.publicVariables;
 		__interp.staticVariables = ogInterp.staticVariables;
 		__interp.customClasses = ogInterp.customClasses;
